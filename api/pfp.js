@@ -82,8 +82,13 @@ export default async function handler(req, res) {
     let out;
 
     if (decor) {
-      // Try animated version first (passthrough=true keeps animation)
-      const decorUrl = `https://cdn.discordapp.com/avatar-decoration-presets/${decor}.png?size=${size}&passthrough=true`;
+      // Check if decor ID starts with a_ (animated indicator)
+      const isAnimatedId = decor.startsWith("a_");
+      console.log("Decor ID:", decor, "Starts with a_:", isAnimatedId);
+      
+      // Use different URL format for animated decorations
+      const ext = isAnimatedId ? "gif" : "png";
+      const decorUrl = `https://cdn.discordapp.com/avatar-decoration-presets/${decor}.${ext}?size=${size}&passthrough=true`;
       const d = await fetch(decorUrl);
 
       if (d.ok) {
@@ -91,7 +96,9 @@ export default async function handler(req, res) {
         
         // Check if decoration is animated
         const decorMeta = await sharp(decorBuf).metadata();
-        isAnimated = decorMeta.pages > 1; // multiple pages = animated
+        console.log("Decor metadata:", JSON.stringify(decorMeta));
+        isAnimated = (decorMeta.pages && decorMeta.pages > 1); // multiple pages = animated
+        console.log("Is animated:", isAnimated, "Pages:", decorMeta.pages);
 
         if (isAnimated) {
           // Get avatar as static buffer first
