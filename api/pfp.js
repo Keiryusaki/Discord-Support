@@ -7,46 +7,35 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-/**
- * Cache circle masks per size, biar gak hitung ulang tiap request
- * key: innerSize => PNG buffer mask
- */
-const maskCache = new Map();
+// cache alpha mask per size biar irit
+const alphaCache = new Map();
 
 /**
- * Create a circular alpha mask as PNG (no SVG).
- * Alpha 255 inside circle, 0 outside.
+ * Create 1-channel alpha mask (raw) for circle.
+ * inside circle: 255, outside: 0
  */
-async function getCircleMaskPng(size) {
-  if (maskCache.has(size)) return maskCache.get(size);
+function getCircleAlphaRaw(size) {
+  if (alphaCache.has(size)) return alphaCache.get(size);
 
   const r = size / 2;
   const r2 = r * r;
   const cx = (size - 1) / 2;
   const cy = (size - 1) / 2;
 
-  const raw = Buffer.alloc(size * size * 4);
+  const alpha = Buffer.alloc(size * size);
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const dx = x - cx;
       const dy = y - cy;
       const inside = (dx * dx + dy * dy) <= r2;
-
-      const idx = (y * size + x) * 4;
-      raw[idx + 0] = 255; // R
-      raw[idx + 1] = 255; // G
-      raw[idx + 2] = 255; // B
-      raw[idx + 3] = inside ? 255 : 0; // A
+      alpha[y * size + x] = inside ? 255 : 0;
     }
   }
 
-  const png = await sharp(raw, { raw: { width: size, height: size, channels: 4 } })
-    .png()
-    .toBuffer();
-
-  maskCache.set(size, png);
-  return png;
+  const obj = { alpha, size };
+  alphaCache.set(size, obj);
+  return obj;
 }
 
 export default async function handler(req, res) {
@@ -60,7 +49,7 @@ export default async function handler(req, res) {
 
     const size = clamp(parseInt(first(q.size ?? "512"), 10) || 512, 128, 1024);
 
-    // ✅ avatar lebih kecil
+    // ✅ avatar user lebih kecil (dekor tetap full)
     const avatarScale = clamp(parseFloat(first(q.avatarScale ?? "0.86")) || 0.86, 0.6, 1);
     const avatarDy = clamp(
       parseInt(first(q.avatarDy ?? "0"), 10) || 0,
@@ -78,14 +67,15 @@ export default async function handler(req, res) {
     if (!a.ok) return res.status(502).send("failed fetch avatar");
     const avatarBuf = Buffer.from(await a.arrayBuffer());
 
-    // 3) resize avatar kecil + FULL ROUND (mask RAW)
+    // 3) resize avatar kecil + apply round alpha (JOIN CHANNEL, no dest-in)
     const inner = Math.round(size * avatarScale);
-    const maskPng = await getCircleMaskPng(inner);
+    const { alpha, size: alphaSize } = getCircleAlphaRaw(inner);
 
+    // buat avatar RGB (tanpa alpha), lalu tambah alpha dari mask
     const avatarRounded = await sharp(avatarBuf)
       .resize(inner, inner)
-      .ensureAlpha()
-      .composite([{ input: maskPng, blend: "dest-in" }])
+      .removeAlpha() // jadi RGB
+      .joinChannel(alpha, { raw: { width: alphaSize, height: alphaSize, channels: 1 } }) // tambah alpha
       .png()
       .toBuffer();
 
@@ -117,8 +107,7 @@ export default async function handler(req, res) {
     const outBuf = await canvas.png().toBuffer();
 
     res.setHeader("Content-Type", "image/png");
-    // cache pendek dulu biar enak test
-    res.setHeader("Cache-Control", "public, max-age=60");
+    res.setHeader("Cache-Control", "public, max-age=60"); // pendek dulu biar gampang test
     return res.status(200).send(outBuf);
   } catch (e) {
     return res.status(500).send("error");
