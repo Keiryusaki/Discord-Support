@@ -42,9 +42,32 @@ export default async function handler(req, res) {
     const avatarSize = 400; // smaller to fit inside decoration frame
     const padding = Math.floor((size - avatarSize) / 2); // padding untuk center
 
-    // Resize avatar dan extend dengan padding transparent (auto center)
-    let base = sharp(avatarBuf)
+    // Step 1: Resize avatar
+    const resizedAvatar = await sharp(avatarBuf)
       .resize(avatarSize, avatarSize)
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+
+    // Step 2: Create circle mask (grayscale values for alpha)
+    const maskRaw = await sharp(createCircleMaskSvg(avatarSize))
+      .resize(avatarSize, avatarSize)
+      .extractChannel(0) // ambil 1 channel saja (grayscale)
+      .raw()
+      .toBuffer();
+
+    // Step 3: Apply mask to alpha channel
+    const pixelCount = avatarSize * avatarSize;
+    for (let i = 0; i < pixelCount; i++) {
+      // resizedAvatar is RGBA (4 channels), maskRaw is grayscale (1 channel)
+      // Set alpha channel (index 3) to mask value
+      resizedAvatar[i * 4 + 3] = maskRaw[i];
+    }
+
+    // Step 4: Convert back to PNG and extend dengan padding
+    let base = sharp(resizedAvatar, {
+      raw: { width: avatarSize, height: avatarSize, channels: 4 }
+    })
       .extend({
         top: padding,
         bottom: padding,
