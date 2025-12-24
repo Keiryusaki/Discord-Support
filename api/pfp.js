@@ -4,21 +4,11 @@ function first(v) {
   return Array.isArray(v) ? v[0] : v;
 }
 
-// Create circular image using SVG clipPath (like CSS border-radius)
-function createCircularSvg(base64Image, size) {
+// Create circle mask - white circle on transparent background
+function createCircleMaskSvg(size) {
   return Buffer.from(`
-    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs>
-        <clipPath id="circleClip">
-          <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}"/>
-        </clipPath>
-      </defs>
-      <image 
-        width="${size}" 
-        height="${size}" 
-        xlink:href="data:image/png;base64,${base64Image}"
-        clip-path="url(#circleClip)"
-      />
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="white"/>
     </svg>
   `);
 }
@@ -52,17 +42,28 @@ export default async function handler(req, res) {
     const avatarSize = 400; // smaller to fit inside decoration frame
     const offset = Math.floor((size - avatarSize) / 2); // center offset
 
-    // Resize avatar and convert to base64
+    // Resize avatar
     const resizedAvatar = await sharp(avatarBuf)
       .resize(avatarSize, avatarSize)
+      .ensureAlpha()
       .png()
       .toBuffer();
     
-    const base64Avatar = resizedAvatar.toString("base64");
+    // Create circle mask PNG
+    const maskPng = await sharp(createCircleMaskSvg(avatarSize))
+      .resize(avatarSize, avatarSize)
+      .ensureAlpha()
+      .png()
+      .toBuffer();
 
-    // Create circular avatar using SVG clipPath (like CSS border-radius: 100%)
-    const circularSvg = createCircularSvg(base64Avatar, avatarSize);
-    const circularAvatar = await sharp(circularSvg).png().toBuffer();
+    // Apply circular mask - composite avatar with mask
+    const circularAvatar = await sharp(resizedAvatar)
+      .composite([{
+        input: maskPng,
+        blend: "dest-in"
+      }])
+      .png()
+      .toBuffer();
 
     // Create base canvas with circular avatar centered
     let base = sharp({
