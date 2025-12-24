@@ -4,16 +4,23 @@ function first(v) {
   return Array.isArray(v) ? v[0] : v;
 }
 
-// Create circular mask with proper alpha channel
-function createCircleMask(size) {
-  const center = size / 2;
-  const radius = size / 2;
-  return Buffer.from(
-    `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="${size}" height="${size}" fill="black"/>
-      <circle cx="${center}" cy="${center}" r="${radius}" fill="white"/>
-    </svg>`
-  );
+// Create circular image using SVG clipPath (like CSS border-radius)
+function createCircularSvg(base64Image, size) {
+  return Buffer.from(`
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+      <defs>
+        <clipPath id="circleClip">
+          <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}"/>
+        </clipPath>
+      </defs>
+      <image 
+        width="${size}" 
+        height="${size}" 
+        xlink:href="data:image/png;base64,${base64Image}"
+        clip-path="url(#circleClip)"
+      />
+    </svg>
+  `);
 }
 
 export default async function handler(req, res) {
@@ -45,39 +52,17 @@ export default async function handler(req, res) {
     const avatarSize = 400; // smaller to fit inside decoration frame
     const offset = Math.floor((size - avatarSize) / 2); // center offset
 
-    // Create circular avatar using mask as alpha channel
+    // Resize avatar and convert to base64
     const resizedAvatar = await sharp(avatarBuf)
       .resize(avatarSize, avatarSize)
       .png()
       .toBuffer();
+    
+    const base64Avatar = resizedAvatar.toString("base64");
 
-    // Create grayscale mask for alpha channel
-    const maskBuffer = await sharp(createCircleMask(avatarSize))
-      .resize(avatarSize, avatarSize)
-      .grayscale()
-      .raw()
-      .toBuffer();
-
-    // Get avatar pixels
-    const avatarData = await sharp(resizedAvatar)
-      .ensureAlpha()
-      .raw()
-      .toBuffer();
-
-    // Apply circular mask to alpha channel
-    const pixels = Buffer.alloc(avatarSize * avatarSize * 4);
-    for (let i = 0; i < avatarSize * avatarSize; i++) {
-      pixels[i * 4] = avatarData[i * 4];       // R
-      pixels[i * 4 + 1] = avatarData[i * 4 + 1]; // G
-      pixels[i * 4 + 2] = avatarData[i * 4 + 2]; // B
-      pixels[i * 4 + 3] = maskBuffer[i];         // A from mask
-    }
-
-    const circularAvatar = await sharp(pixels, {
-      raw: { width: avatarSize, height: avatarSize, channels: 4 }
-    })
-      .png()
-      .toBuffer();
+    // Create circular avatar using SVG clipPath (like CSS border-radius: 100%)
+    const circularSvg = createCircularSvg(base64Avatar, avatarSize);
+    const circularAvatar = await sharp(circularSvg).png().toBuffer();
 
     // Create base canvas with circular avatar centered
     let base = sharp({
