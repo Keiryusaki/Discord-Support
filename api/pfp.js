@@ -7,19 +7,61 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+/**
+ * Cache circle masks per size, biar gak hitung ulang tiap request
+ * key: innerSize => PNG buffer mask
+ */
+const maskCache = new Map();
+
+/**
+ * Create a circular alpha mask as PNG (no SVG).
+ * Alpha 255 inside circle, 0 outside.
+ */
+async function getCircleMaskPng(size) {
+  if (maskCache.has(size)) return maskCache.get(size);
+
+  const r = size / 2;
+  const r2 = r * r;
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+
+  const raw = Buffer.alloc(size * size * 4);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      const inside = (dx * dx + dy * dy) <= r2;
+
+      const idx = (y * size + x) * 4;
+      raw[idx + 0] = 255; // R
+      raw[idx + 1] = 255; // G
+      raw[idx + 2] = 255; // B
+      raw[idx + 3] = inside ? 255 : 0; // A
+    }
+  }
+
+  const png = await sharp(raw, { raw: { width: size, height: size, channels: 4 } })
+    .png()
+    .toBuffer();
+
+  maskCache.set(size, png);
+  return png;
+}
+
 export default async function handler(req, res) {
   try {
     const q = req.query ?? {};
 
-    const uid = String(first(q.uid ?? "")).trim();
-    const avatar = String(first(q.avatar ?? "")).trim();
-    const decor = String(first(q.decor ?? "")).trim();
-    const def = String(first(q.def ?? "")).trim();
+    const uid = String(first(q.uid ?? "")).trim();        // {User.id}
+    const avatar = String(first(q.avatar ?? "")).trim();  // {User.avatar}
+    const decor = String(first(q.decor ?? "")).trim();    // {User.avatarDecorationData.asset}
+    const def = String(first(q.def ?? "")).trim();        // {User.defaultAvatarURL} optional
 
     const size = clamp(parseInt(first(q.size ?? "512"), 10) || 512, 128, 1024);
 
-    // ✅ avatar dibuat lebih kecil
-    const avatarScale = clamp(parseFloat(first(q.avatarScale ?? "0.85")) || 0.85, 0.6, 1);
+    // ✅ avatar lebih kecil
+    const avatarScale = clamp(parseFloat(first(q.avatarScale ?? "0.86")) || 0.86, 0.6, 1);
     const avatarDy = clamp(
       parseInt(first(q.avatarDy ?? "0"), 10) || 0,
       -Math.floor(size * 0.2),
@@ -36,26 +78,18 @@ export default async function handler(req, res) {
     if (!a.ok) return res.status(502).send("failed fetch avatar");
     const avatarBuf = Buffer.from(await a.arrayBuffer());
 
-    // 3) bikin avatar kecil + FULL ROUND (mask di avatar doang)
+    // 3) resize avatar kecil + FULL ROUND (mask RAW)
     const inner = Math.round(size * avatarScale);
-
-    // circle mask (SVG) -> pastikan sharp render benar
-    const r = inner / 2;
-    const maskSvg = `
-      <svg width="${inner}" height="${inner}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="100%" height="100%" fill="black"/>
-        <circle cx="${r}" cy="${r}" r="${r}" fill="white"/>
-      </svg>
-    `;
+    const maskPng = await getCircleMaskPng(inner);
 
     const avatarRounded = await sharp(avatarBuf)
       .resize(inner, inner)
-      .ensureAlpha() // ✅ penting biar dest-in gak "kosong"
-      .composite([{ input: Buffer.from(maskSvg), blend: "dest-in" }])
+      .ensureAlpha()
+      .composite([{ input: maskPng, blend: "dest-in" }])
       .png()
       .toBuffer();
 
-    // 4) canvas transparan
+    // 4) canvas transparan + taruh avatar bulat di tengah
     const x = Math.round((size - inner) / 2);
     let y = Math.round((size - inner) / 2) + avatarDy;
     y = clamp(y, 0, size - inner);
@@ -82,9 +116,9 @@ export default async function handler(req, res) {
 
     const outBuf = await canvas.png().toBuffer();
 
-    // cache + response
     res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", "public, max-age=60"); // pendek dulu biar gampang test
+    // cache pendek dulu biar enak test
+    res.setHeader("Cache-Control", "public, max-age=60");
     return res.status(200).send(outBuf);
   } catch (e) {
     return res.status(500).send("error");
