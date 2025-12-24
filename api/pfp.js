@@ -4,6 +4,15 @@ function first(v) {
   return Array.isArray(v) ? v[0] : v;
 }
 
+// Create circular mask SVG
+function createCircleMask(size) {
+  return Buffer.from(
+    `<svg width="${size}" height="${size}">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="white"/>
+    </svg>`
+  );
+}
+
 export default async function handler(req, res) {
   try {
     const q = req.query ?? {};
@@ -29,8 +38,33 @@ export default async function handler(req, res) {
     if (!a.ok) return res.status(502).send("failed fetch avatar");
     const avatarBuf = Buffer.from(await a.arrayBuffer());
 
-    // base avatar
-    let base = sharp(avatarBuf).resize(size, size).png();
+    // Avatar size settings - scale down to fit inside decoration
+    const avatarSize = 400; // smaller to fit inside decoration frame
+    const offset = Math.floor((size - avatarSize) / 2); // center offset
+
+    // Create circular avatar
+    const circularAvatar = await sharp(avatarBuf)
+      .resize(avatarSize, avatarSize)
+      .composite([
+        {
+          input: createCircleMask(avatarSize),
+          blend: "dest-in", // use mask to cut out circle
+        },
+      ])
+      .png()
+      .toBuffer();
+
+    // Create base canvas with circular avatar centered
+    let base = sharp({
+      create: {
+        width: size,
+        height: size,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 }, // transparent
+      },
+    })
+      .png()
+      .composite([{ input: circularAvatar, top: offset, left: offset }]);
 
     // overlay decoration (full size)
     if (decor) {
@@ -50,6 +84,7 @@ export default async function handler(req, res) {
     res.setHeader("Cache-Control", "no-store"); // biar gak ke-cache pas reset
     return res.status(200).send(out);
   } catch (e) {
+    console.error(e);
     return res.status(500).send("error");
   }
 }
