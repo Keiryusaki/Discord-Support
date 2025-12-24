@@ -11,16 +11,20 @@ export default async function handler(req, res) {
   try {
     const q = req.query ?? {};
 
-    const uid = String(first(q.uid ?? "")).trim();        // {User.id}
-    const avatar = String(first(q.avatar ?? "")).trim();  // {User.avatar}
-    const decor = String(first(q.decor ?? "")).trim();    // {User.avatarDecorationData.asset}
-    const def = String(first(q.def ?? "")).trim();        // {User.defaultAvatarURL} optional
+    const uid = String(first(q.uid ?? "")).trim();
+    const avatar = String(first(q.avatar ?? "")).trim();
+    const decor = String(first(q.decor ?? "")).trim();
+    const def = String(first(q.def ?? "")).trim();
 
     const size = clamp(parseInt(first(q.size ?? "512"), 10) || 512, 128, 1024);
 
     // ✅ avatar dibuat lebih kecil
     const avatarScale = clamp(parseFloat(first(q.avatarScale ?? "0.85")) || 0.85, 0.6, 1);
-    const avatarDy = clamp(parseInt(first(q.avatarDy ?? "0"), 10) || 0, -Math.floor(size * 0.2), Math.floor(size * 0.2));
+    const avatarDy = clamp(
+      parseInt(first(q.avatarDy ?? "0"), 10) || 0,
+      -Math.floor(size * 0.2),
+      Math.floor(size * 0.2)
+    );
 
     // 1) avatar URL
     let avatarUrl = def;
@@ -34,16 +38,21 @@ export default async function handler(req, res) {
 
     // 3) bikin avatar kecil + FULL ROUND (mask di avatar doang)
     const inner = Math.round(size * avatarScale);
+
+    // circle mask (SVG) -> pastikan sharp render benar
     const r = inner / 2;
-    const circleMask = Buffer.from(`
-<svg width="${inner}" height="${inner}" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="${r}" cy="${r}" r="${r}" fill="white"/>
-</svg>`);
+    const maskSvg = `
+      <svg width="${inner}" height="${inner}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="black"/>
+        <circle cx="${r}" cy="${r}" r="${r}" fill="white"/>
+      </svg>
+    `;
 
     const avatarRounded = await sharp(avatarBuf)
       .resize(inner, inner)
+      .ensureAlpha() // ✅ penting biar dest-in gak "kosong"
+      .composite([{ input: Buffer.from(maskSvg), blend: "dest-in" }])
       .png()
-      .composite([{ input: circleMask, blend: "dest-in" }]) // ✅ round avatar only
       .toBuffer();
 
     // 4) canvas transparan
@@ -73,8 +82,9 @@ export default async function handler(req, res) {
 
     const outBuf = await canvas.png().toBuffer();
 
+    // cache + response
     res.setHeader("Content-Type", "image/png");
-    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("Cache-Control", "public, max-age=60"); // pendek dulu biar gampang test
     return res.status(200).send(outBuf);
   } catch (e) {
     return res.status(500).send("error");
