@@ -78,95 +78,20 @@ export default async function handler(req, res) {
       .png();
 
     // overlay decoration (full size)
-    let isAnimated = false;
-    let out;
-
     if (decor) {
-      // Check if decor ID starts with a_ (animated indicator)
-      const isAnimatedId = decor.startsWith("a_");
-      console.log("Decor ID:", decor, "Starts with a_:", isAnimatedId);
-      
-      // Use different URL format for animated decorations
-      const ext = isAnimatedId ? "gif" : "png";
-      const decorUrl = `https://cdn.discordapp.com/avatar-decoration-presets/${decor}.${ext}?size=${size}&passthrough=true`;
+      const decorUrl = `https://cdn.discordapp.com/avatar-decoration-presets/${decor}.png?size=${size}&passthrough=false`;
       const d = await fetch(decorUrl);
 
       if (d.ok) {
         const decorBuf = Buffer.from(await d.arrayBuffer());
-        
-        // Check if decoration is animated
-        const decorMeta = await sharp(decorBuf).metadata();
-        console.log("Decor metadata:", JSON.stringify(decorMeta));
-        isAnimated = (decorMeta.pages && decorMeta.pages > 1); // multiple pages = animated
-        console.log("Is animated:", isAnimated, "Pages:", decorMeta.pages);
-
-        if (isAnimated) {
-          // Get avatar as static buffer first
-          const avatarStatic = await base.toBuffer();
-          
-          // Get animation metadata
-          const { pages, delay, loop } = decorMeta;
-          
-          // Extract all frames and composite with avatar
-          const frames = [];
-          for (let i = 0; i < pages; i++) {
-            const frame = await sharp(decorBuf, { page: i })
-              .resize(size, size)
-              .toBuffer();
-            
-            // Composite: avatar (background) + decoration frame (foreground)
-            const composited = await sharp(avatarStatic)
-              .composite([{ input: frame, top: 0, left: 0 }])
-              .png()
-              .toBuffer();
-            
-            frames.push(composited);
-          }
-          
-          // Stack frames vertically for animated WebP
-          const frameHeight = size;
-          const totalHeight = frameHeight * frames.length;
-          
-          // Create vertical strip of all frames
-          const stackedFrames = await sharp({
-            create: {
-              width: size,
-              height: totalHeight,
-              channels: 4,
-              background: { r: 0, g: 0, b: 0, alpha: 0 }
-            }
-          })
-            .composite(frames.map((f, i) => ({
-              input: f,
-              top: i * frameHeight,
-              left: 0
-            })))
-            .png()
-            .toBuffer();
-          
-          // Convert to animated WebP
-          out = await sharp(stackedFrames, { animated: true })
-            .webp({ 
-              loop: loop || 0,
-              delay: delay || Array(pages).fill(80),
-              pageHeight: frameHeight
-            })
-            .toBuffer();
-            
-        } else {
-          // Static decoration
-          const decorPng = await sharp(decorBuf).resize(size, size).png().toBuffer();
-          base = base.composite([{ input: decorPng, top: 0, left: 0 }]);
-          out = await base.png().toBuffer();
-        }
-      } else {
-        out = await base.png().toBuffer();
+        const decorPng = await sharp(decorBuf).resize(size, size).png().toBuffer();
+        base = base.composite([{ input: decorPng, top: 0, left: 0 }]);
       }
-    } else {
-      out = await base.png().toBuffer();
     }
 
-    res.setHeader("Content-Type", isAnimated ? "image/webp" : "image/png");
+    const out = await base.png().toBuffer();
+
+    res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "no-store"); // biar gak ke-cache pas reset
     return res.status(200).send(out);
   } catch (e) {
