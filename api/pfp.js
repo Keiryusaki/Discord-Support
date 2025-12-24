@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const avatarBuf = Buffer.from(await a.arrayBuffer());
 
     // Avatar size settings - scale down to fit inside decoration
-    const avatarSize = 400; // smaller to fit inside decoration frame
+    const avatarSize = 450; // slightly smaller than 512 to fit inside decoration frame
     const padding = Math.floor((size - avatarSize) / 2); // padding untuk center
 
     // Step 1: Resize avatar
