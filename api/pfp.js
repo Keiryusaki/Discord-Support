@@ -40,25 +40,19 @@ export default async function handler(req, res) {
 
     // Avatar size settings - scale down to fit inside decoration
     const avatarSize = 400; // smaller to fit inside decoration frame
-    const offset = Math.floor((size - avatarSize) / 2); // center offset
+    const padding = Math.floor((size - avatarSize) / 2); // padding untuk center
 
-    // Resize avatar (tanpa mask dulu - test ukuran)
-    const circularAvatar = await sharp(avatarBuf)
+    // Resize avatar dan extend dengan padding transparent (auto center)
+    let base = sharp(avatarBuf)
       .resize(avatarSize, avatarSize)
-      .png()
-      .toBuffer();
-
-    // Create base canvas with circular avatar centered
-    let base = sharp({
-      create: {
-        width: size,
-        height: size,
-        channels: 4,
-        background: { r: 0, g: 0, b: 0, alpha: 0 }, // transparent
-      },
-    })
-      .png()
-      .composite([{ input: circularAvatar, top: offset, left: offset }]);
+      .extend({
+        top: padding,
+        bottom: padding,
+        left: padding,
+        right: padding,
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .png();
 
     // overlay decoration (full size)
     if (decor) {
