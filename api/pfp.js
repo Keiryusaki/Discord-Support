@@ -42,26 +42,9 @@ export default async function handler(req, res) {
     const avatarSize = 400; // smaller to fit inside decoration frame
     const offset = Math.floor((size - avatarSize) / 2); // center offset
 
-    // Resize avatar
-    const resizedAvatar = await sharp(avatarBuf)
+    // Resize avatar (tanpa mask dulu - test ukuran)
+    const circularAvatar = await sharp(avatarBuf)
       .resize(avatarSize, avatarSize)
-      .ensureAlpha()
-      .png()
-      .toBuffer();
-    
-    // Create circle mask PNG
-    const maskPng = await sharp(createCircleMaskSvg(avatarSize))
-      .resize(avatarSize, avatarSize)
-      .ensureAlpha()
-      .png()
-      .toBuffer();
-
-    // Apply circular mask - composite avatar with mask
-    const circularAvatar = await sharp(resizedAvatar)
-      .composite([{
-        input: maskPng,
-        blend: "dest-in"
-      }])
       .png()
       .toBuffer();
 
